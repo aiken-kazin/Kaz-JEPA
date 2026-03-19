@@ -45,3 +45,17 @@ uv run src/train.py logger=wandb trainer=gpu trainer.max_steps=100000 data.batch
 By default, training checkpoints are saved in the `logs/train/runs/<date>` folder. You can change this by modifying the `logger` configuration in the `config` folder. 
 
 To test the model, please refer to our fork of [X-ARES](https://github.com/LudovicTuncay/xares) where we added support for Audio-JEPA.
+
+## 📌  Citation
+
+If you use this work in your research, please consider citing as:
+```bibtex
+@inproceedings{tuncay2025audio,
+  title = {{Audio-JEPA: Joint-Embedding Predictive Architecture for Audio Representation Learning}},
+  author = {Tuncay, Ludovic and Labb{\'e}, Etienne and Benetos, Emmanouil and Pellegrini, Thomas},
+  booktitle = {ICME 2025},
+  address = {Nantes, France},
+  year = {2025},
+  url = {https://hal.science/hal-05128180}
+}
+```
