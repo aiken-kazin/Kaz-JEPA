@@ -56,7 +56,8 @@ class AudioSetDataModule(L.LightningDataModule):
         """
         
         super().__init__()
-        self.save_hyperparameters(logger=False, ignore=["mask_collator", "train_dataset", "eval_dataset"])
+        self.save_hyperparameters(logger=False,
+                                  ignore=["mask_collator", "train_dataset", "val_dataset","eval_dataset"])
         
         # Data paths
         self.train_dataset = train_dataset
