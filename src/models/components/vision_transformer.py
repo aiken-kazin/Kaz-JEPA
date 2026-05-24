@@ -21,7 +21,20 @@ from src.models.components.positional_embedding import (
 from src.models.components.mlp import MLP
 from src.models.components.drop_path import DropPath
 
-from flash_attn.modules.mha import MHA
+try:
+    from flash_attn.modules.mha import MHA
+except ImportError:
+    class MHA(nn.Module):
+        def __init__(self, embed_dim, num_heads, dropout=0.0, qkv_proj_bias=True,
+                     use_flash_attn=False, **kwargs):
+            super().__init__()
+            self.mha = nn.MultiheadAttention(
+                embed_dim, num_heads, dropout=dropout, bias=qkv_proj_bias, batch_first=True
+            )
+
+        def forward(self, x, **kwargs):
+            out, _ = self.mha(x, x, x, need_weights=False)
+            return out
 
 class Block(nn.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,

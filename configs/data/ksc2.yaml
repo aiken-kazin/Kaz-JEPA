@@ -1,0 +1,62 @@
+# configs/data/ksc2.yaml
+# KSC2 Kazakh speech — pretraining set for Audio-JEPA.
+# Mirrors configs/data/audioset.yaml. HDF5 layout produced by convert_to_hdf5.py.
+
+_target_: src.data.audioset_datamodule.AudioSetDataModule
+
+defaults:
+  - _self_
+
+# DataLoader configurations
+batch_size: 8
+num_workers: 2
+pin_memory: true
+persistent_workers: true
+
+# Frontend parameters
+sr: 32000
+clip_length: 10  # seconds
+
+# Task parameters (unused for SSL pretraining; kept to match upstream schema)
+classes_num: 527
+
+# waveform transforms
+transforms:
+  - _target_: src.data.components.mel_spec.MelSpecTransform
+    sr: ${data.sr}
+    n_mels: 96
+    target_time_bins: 512
+    clip_length: ${data.clip_length}
+
+##################################################
+# Datasets (HDF5-based, same loader as AudioSet)
+##################################################
+train_dataset:
+  _target_: src.data.components.audioset_dataset.AudioSetDataset
+  hdf5_file: ${paths.data_dir}/KSC2/ksc2_train.h5
+  sr: ${data.sr}
+  clip_length: ${data.clip_length}
+  classes_num: ${data.classes_num}
+  mp3_dataset: false
+  transforms: ${data.transforms}
+  exclude_csv_path: null
+
+val_dataset:
+  _target_: src.data.components.audioset_dataset.AudioSetDataset
+  hdf5_file: ${paths.data_dir}/KSC2/ksc2_dev.h5
+  sr: ${data.sr}
+  clip_length: ${data.clip_length}
+  classes_num: ${data.classes_num}
+  mp3_dataset: false
+  transforms: ${data.transforms}
+  exclude_csv_path: null
+
+eval_dataset:
+  _target_: src.data.components.audioset_dataset.AudioSetDataset
+  hdf5_file: ${paths.data_dir}/KSC2/ksc2_dev.h5
+  sr: ${data.sr}
+  clip_length: ${data.clip_length}
+  classes_num: ${data.classes_num}
+  mp3_dataset: false
+  transforms: ${data.transforms}
+  exclude_csv_path: null
