@@ -1,61 +1,109 @@
 ================================================================
 KAZ-JEPA PROJECT CONTEXT
-Last updated: 2026-05-25 (overnight 100k run launched)
+Last updated: 2026-05-25 22:00 (after eval-heavy day)
 ================================================================
 
 WHAT THIS IS
 ------------
 First JEPA-based self-supervised speech model for Kazakh language.
 Adaptation of Audio-JEPA (Tuncay et al., ICME 2025) to KSC2 dataset.
-Target: arxiv preprint within ~6 weeks.
+Originally targeted arxiv preprint; current focus shifted to
+LinkedIn post + HuggingFace upload (preprint optional later).
 
 GITHUB REPO
 -----------
 https://github.com/aiken-kazin/Kaz-JEPA
 (fork of LudovicTuncay/Audio-JEPA)
+README rewritten 2026-05-25 to describe Kaz-JEPA work
+(no longer a copy of upstream README).
 
 WORKFLOW
 --------
-1. Develop on MacBook (no GPU, for testing)
-2. Push to GitHub
-3. Pull on training machine (RunPod or university WSL2)
-4. Run training on RTX 5090
+Develop on MacBook → push to GitHub → pull on WSL2 (RTX 5090).
 
 KEY CONSTRAINTS
 ---------------
 - Do NOT modify original Audio-JEPA source files
-- Only ADD new files: convert_to_hdf5.py + configs/data/ksc2.yaml
 - ONE allowed source modification: vision_transformer.py import shim
-  (flash_attn fallback to nn.MultiheadAttention when CUDA missing)
+  (flash_attn fallback to nn.MultiheadAttention)
+- Everything else added as NEW top-level files.
 
-CURRENT STATE (2026-05-25)
---------------------------
-✅ Code on GitHub, working on both Mac (CPU) and WSL2 (RTX 5090)
-✅ KSC2 converted to HDF5:
-   - data/KSC2/ksc2_train.h5 (627,824 clips, 185 GB, ~1744 hours)
-   - data/KSC2/ksc2_dev.h5 (8,685 clips, 2.4 GB)
-✅ First JEPA pretraining done (30k steps, 54 min on 5090):
-   - val/loss: 0.0215 (plateaued between step 19620 and 29430)
-   - val/variance: 22.38 (no collapse — confirmed by quick_test_jepa.py)
-   - Checkpoint: logs/train/runs/2026-05-25_06-33-57/checkpoints/last.ckpt
-✅ quick_test_jepa.py confirms model health:
-   - All weights valid (no NaN/Inf)
-   - Encoder ≠ Target Encoder (EMA worked, divergence 0.000088)
-   - Encoder weight stats normal (mean abs 0.029, std 0.039)
-🔄 100k continuation run launched overnight 2026-05-25 ~05:00,
-   resuming from 30k last.ckpt. Expected finish: ~07:00 (2h on 5090).
+WHAT'S DONE
+-----------
+✅ KSC2 → HDF5:
+   data/KSC2/ksc2_train.h5  (627,824 clips, 185 GB, ~1744 hours)
+   data/KSC2/ksc2_dev.h5    (8,685 clips, 2.4 GB)
+   data/KSC2/asr_manifest.csv (640,816 audio↔transcript pairs)
+   data/KSC2/vocab.json (45 chars, Kazakh Cyrillic + few Latin)
 
-⏭️ NEXT STEPS (for tomorrow's session)
-   1. Check 100k run finished cleanly: tail training_100k.log, ls checkpoints/
-   2. Compare 100k val/loss vs 30k=0.0215 → did extending help?
-   3. Run quick_test_jepa.py on the 100k checkpoint
-   4. Decide which checkpoint to use as v1 for ASR
-   5. Start building ASR fine-tuning pipeline:
-      - Look at X-ARES fork: https://github.com/LudovicTuncay/xares
-      - Or write custom CTC head + char tokenizer for Kazakh
-   6. Locate KSC2 transcripts (need to grep for non-FLAC files in
-      /home/ubuntu/kazjepa/data/ksc2/ISSAI_KSC2/)
-   7. Write preprint v1 (4-6 weeks goal)
+✅ Three pretraining runs done:
+   Run 1: 30k steps, old config (96 mel × 512 time, batch 32)
+          logs/train/runs/2026-05-25_06-33-57/checkpoints/last.ckpt
+          val/loss 0.0215, val/variance 22.38 (no collapse)
+   Run 2: 100k steps continuation, same old config
+          logs/train/runs/2026-05-25_17-09-34/checkpoints/last.ckpt
+          val/loss 0.0215 (no improvement over 30k — plateau)
+   Run 3: PAPER-EXACT config (128 mel × 256 time, batch=64 + accum=4 = 256)
+          STILL RUNNING as of 22:00.
+          logs/train/runs/2026-05-25_20-58-02/  (PID 293494)
+          ~21 hours total wall time expected.
+          At 2 epochs (step 2453): probe accuracy = 77.4%
+          At later epoch (~step 5000): probe accuracy = 77.8%
+
+✅ Evaluation pipeline (we built):
+   evaluate_knn.py          — kNN domain classification
+   linear_probe.py          — MLP linear probing (2-layer)
+   evaluate_content_similarity.py — label-free content/text correlation
+   visualize_embeddings.py  — PCA + t-SNE plots for paper figures
+   quick_test_jepa.py       — checkpoint sanity check (weights healthy?)
+   prepare_ksc2_asr.py      — FLAC↔transcript pairing → manifest CSV
+   asr_data.py              — Kazakh char tokenizer + ASR Dataset class
+   asr_model.py             — JEPA encoder + linear CTC head
+   finetune_asr.py          — CTC ASR fine-tuning (DOESN'T WORK — arch limit)
+   eval_asr.py              — WER/CER eval (didn't get usable model)
+
+✅ Paper draft started:
+   paper/draft_v1.md        — markdown outline
+   paper/audio_jepa_kz.tex  — LaTeX in IEEEtran conference style
+
+KEY RESULTS (so far)
+--------------------
+Domain classification (5-class test, KSC2 source labels):
+  Random baseline (1/5):        20.0%
+  kNN method:
+    Random init encoder:        45.2%
+    Old-config 30k:             55.4%   (+10.2 pp over random init)
+    Paper-config 2 epochs:      60.8%   (+15.6 pp)
+  MLP probe method:
+    Random init encoder:        63.0%
+    Old-config 30k:             71.8%   (+8.8 pp)
+    Old-config 100k:            71.8%   (no improvement — plateau)
+    Paper-config 2 epochs:      77.4%   (+14.4 pp)
+    Paper-config ~5k step:      77.8%   (+14.8 pp)
+
+Content similarity correlation (label-free):
+    Paper-config: Pearson 0.031 (weak, but buckets monotonic)
+    → encoder captures acoustic structure, NOT lexical content.
+    Known limitation of mel-spec JEPA.
+
+ASR (CTC fine-tuning): DOES NOT WORK
+    Reason: patch grid temporal resolution too coarse.
+    Old config: 32 time patches; new paper config: 16 patches.
+    Median Kazakh transcript = 74 chars → physically can't represent.
+    Plateau loss ~3.0, HYP outputs become "ааа нан а" noise.
+
+DECISIONS LOGGED
+----------------
+- Stick with Audio-JEPA fork — minimal-change adaptation, NOT rewrite.
+- ASR formally abandoned for v1: needs Conv1D upsampling head or
+  seq2seq decoder (1-3 days more work). Left as future work.
+- Domain classification is the primary evaluation, with the caveat
+  that radio is too easily separable (broadcast acoustics).
+- Paper-config (128×256 mel, batch 256 effective) significantly
+  outperforms our initial config — this is the configuration we
+  should use for the released checkpoint.
+- LinkedIn post + HuggingFace upload chosen as the IMMEDIATE
+  publication artifact. Preprint deferred (maybe never, that's fine).
 
 ENVIRONMENT-SPECIFIC GOTCHAS
 ----------------------------
@@ -64,91 +112,79 @@ On Mac (CPU, testing):
   PROJECT_ROOT=$PWD uv run --no-sync python src/train.py ...
 
 On RunPod / WSL2 with RTX 5090:
-  - Install PyTorch with CUDA 12.8 for Blackwell sm_120 support:
+  - PyTorch CUDA 12.8 for Blackwell sm_120:
     pip install --upgrade torch torchvision torchaudio \
       --index-url https://download.pytorch.org/whl/cu128
-  - flash-attn skip OK, we have a shim
-  - Always pass test=False (JEPAModule has no test_step → crashes)
-  - PROJECT_ROOT=$PWD env var is required (referenced in
-    configs/paths/default.yaml)
-  - Paste commands as ONE line (terminal breaks them silently)
-
-KEY FILES
----------
-convert_to_hdf5.py             — FLAC → HDF5 in AudioSetDataset schema
-configs/data/ksc2.yaml         — KSC2 datamodule config
-src/models/components/vision_transformer.py:24 — flash_attn shim
+  - flash-attn skip OK, shim handles it
+  - Always pass `test=False` to src/train.py (no test_step in JEPAModule)
+  - PROJECT_ROOT=$PWD env var required (referenced in paths config)
+  - Paste long commands as ONE LINE — terminal breaks silently
+  - For grad accumulation, use `+trainer.accumulate_grad_batches=4`
+    (the `+` is required — key isn't in default trainer config)
+  - Lightning's RichProgressBar doesn't flush to nohup log file —
+    monitor via checkpoint timestamps instead.
 
 COMMANDS REFERENCE
 ------------------
-Convert data (one-time per dataset):
+Convert data:
   PROJECT_ROOT=$PWD python convert_to_hdf5.py \
       --src /path/to/ISSAI_KSC2 --out data/KSC2
 
-GPU sanity check (100 steps):
-  PROJECT_ROOT=$PWD python src/train.py data=ksc2 trainer=gpu \
-      trainer.max_steps=100 data.batch_size=32 data.num_workers=4 \
-      tags='[smoke]' test=False
-
-Full pretrain (30k steps ~ 1 hour on 5090; 100k ~ 3.5 hours):
+Pretrain (paper-exact config, ~21 hours for 100k steps on 5090):
   PROJECT_ROOT=$PWD nohup python src/train.py data=ksc2 trainer=gpu \
-      trainer.max_steps=30000 data.batch_size=32 data.num_workers=8 \
-      tags='[full,kazakh,jepa]' test=False > training.log 2>&1 &
+      trainer.max_steps=100000 data.batch_size=64 \
+      +trainer.accumulate_grad_batches=4 \
+      data.num_workers=8 tags='[paper_config,100k]' test=False \
+      > training_paper_cfg.log 2>&1 &
 
-Resume from checkpoint:
-  ...same command... \
-      ckpt_path=logs/train/runs/<date>/checkpoints/last.ckpt
+Build manifest + vocab:
+  python prepare_ksc2_asr.py --src /path/to/ISSAI_KSC2
+  python asr_data.py build-vocab --manifest data/KSC2/asr_manifest.csv
 
-Monitor:
-  ps -p <PID>                                  # alive?
-  nvidia-smi                                   # GPU usage
-  tail -50 training.log                        # recent log
-  ls -lh logs/train/runs/*/checkpoints/        # checkpoints
+Eval (note: --mel-bands and --mel-time must match the checkpoint's
+training config; default 128×256 for paper-config checkpoints,
+pass --mel-bands 96 --mel-time 512 for old-config checkpoints):
+  python evaluate_knn.py    --ckpt <ckpt> --per-domain-train 500 --per-domain-test 100
+  python linear_probe.py    --ckpt <ckpt> --per-domain-train 500 --per-domain-test 100
+  python evaluate_content_similarity.py --ckpt <ckpt> --n-clips 1000 --n-pairs 5000
+  python visualize_embeddings.py --ckpt <ckpt> --tag mymodel
+  python quick_test_jepa.py --ckpt <ckpt>
 
-KEY METRICS TO WATCH
---------------------
-- val/loss → should decrease smoothly. Plateau means hit
-  current config's limit.
-- val/variance → should stay > 0.1 (or much higher with our
-  scaling; our 30k run gave 22.38).
-  Near zero (< 0.001) means COLLAPSE → model useless.
-
-ARXIV PREPRINT PLAN (v1, 4-6 weeks)
-------------------------------------
-Title: "Audio-JEPA for Kazakh Speech: First Self-Supervised
-        Pretrained Model for a Turkic Language"
-Min content:
-  - Pretrain on KSC2 (✅ done)
-  - One downstream task with numbers (ASR WER/CER on test set)
-  - One baseline (random init, no pretrain)
-  - Code on GitHub
-Length: 4-6 pages
-
-DECISIONS LOGGED
-----------------
-- Stick with Audio-JEPA fork, do NOT rewrite from scratch.
-  Reason: minimal-change adaptation is academic norm; rewriting
-  costs months without scientific benefit.
-- KRSL (Kazakh Sign Language) V-JEPA 2 idea: parked as potential
-  Project 2 after Kaz-JEPA preprint, contingent on dataset
-  availability (need to verify with ISSAI / KazNU).
-- ASR chosen as downstream task (vs simpler Speaker/Language ID).
-  Reason: most publishable for speech preprint; KSC2 already has
-  transcripts so no extra data collection needed.
+Random-init baselines (same scripts, --random-init flag):
+  python evaluate_knn.py --random-init ...
+  python linear_probe.py --random-init ...
 
 USER NOTES
 ----------
-- Email: aikenkazin@gmail.com
+- Email: aikenkazin@gmail.com (LinkedIn account exists, GitHub aiken-kazin)
 - Prefers Russian for conversation
-- Walks through commands step-by-step (newer to ML infra/DevOps,
-  comfortable with concepts)
-- KSC2 full dataset already on WSL: /home/ubuntu/kazjepa/data/ksc2/
+- Newer to ML infra/DevOps, comfortable with concepts
+- KSC2 dataset on WSL at /home/ubuntu/kazjepa/data/ksc2/ISSAI_KSC2/
+- Trajectory across the session: oscillated between excitement and
+  frustration. Concerned about whether the work is "good enough" /
+  whether it will be used. Honest about feelings — take that
+  seriously when advising.
+- Decision-style: prefers concrete short options ("A/B/C — what to do")
+  over open-ended exploration once tired.
+
+ANTI-PATTERNS — DO NOT REPEAT
+-----------------------------
+- Don't claim the result is more impressive than it is.
+  The +14 pp gain on domain classification is real but modest;
+  radio dominates the easy-task side. Be honest in any paper/post.
+- Don't suggest more pretraining as a fix — we proved it doesn't
+  help past ~30k for the same config. Architecture is the bottleneck,
+  not compute.
+- Don't push for ASR with the current encoder — temporal resolution
+  is wrong for CTC. Would need a real architectural fix.
 
 NEXT-SESSION CHECKLIST
 ----------------------
-When picking this up again:
 1. Read this file
-2. Check git log for recent commits
-3. Check logs/train/runs/ to see most recent training run
-4. Ask user: which path are we on now — extending pretrain,
-   building ASR, or writing paper?
+2. `git log --oneline -20` to see recent commits
+3. `ls -lt logs/train/runs/2026-05-25_20-58-02/checkpoints/` to see
+   final state of the paper-config run
+4. Ask user where they are: did they post on LinkedIn? Uploaded to HF?
+   Still want preprint? Or moved on entirely?
+5. If continuing: linear_probe.py on final paper-config checkpoint
+   is the headline number for any external communication.
