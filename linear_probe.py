@@ -85,7 +85,7 @@ def sample_balanced(rows, target_split, per_domain, seed=0):
 # Mel-spec extractor
 # -----------------------------------------------------------------------------
 class MelExtractor:
-    def __init__(self, sr=32000, clip_length=10.0, n_mels=96, target_time_bins=512,
+    def __init__(self, sr=32000, clip_length=10.0, n_mels=128, target_time_bins=256,
                  n_fft=2048, hop_length=320):
         self.sr = sr
         self.target_samples = int(sr * clip_length)
@@ -226,6 +226,8 @@ def main() -> None:
     p.add_argument("--batch-size", type=int, default=16)
     p.add_argument("--probe-batch", type=int, default=64)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--mel-bands", type=int, default=128, help="n_mels (must match checkpoint)")
+    p.add_argument("--mel-time", type=int, default=256, help="target_time_bins (must match checkpoint)")
     args = p.parse_args()
 
     if not args.random_init and args.ckpt is None:
@@ -251,8 +253,8 @@ def main() -> None:
     test_items = [t for t in test_items if t[1] in domains]
     print(f"      using {len(domains)} domains in both splits: {domains}")
 
-    print(f"[2/5] Building encoder")
-    encoder = build_encoder()
+    print(f"[2/5] Building encoder (input_size = {args.mel_time} x {args.mel_bands})")
+    encoder = build_encoder(input_size=(args.mel_time, args.mel_bands))
     if args.random_init:
         print("      using RANDOM-init encoder (baseline)")
     else:
@@ -261,7 +263,7 @@ def main() -> None:
     for p_ in encoder.parameters():
         p_.requires_grad = False
 
-    mel = MelExtractor()
+    mel = MelExtractor(n_mels=args.mel_bands, target_time_bins=args.mel_time)
 
     print(f"[3/5] Computing TRAIN embeddings (frozen encoder)")
     train_emb, train_labels = compute_embeddings(encoder, mel, train_items,

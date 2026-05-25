@@ -96,7 +96,7 @@ def sample_balanced(rows: list[tuple[str, str, str]], target_split: str,
 # -----------------------------------------------------------------------------
 class MelExtractor:
     def __init__(self, sr: int = 32000, clip_length: float = 10.0,
-                 n_mels: int = 96, target_time_bins: int = 512,
+                 n_mels: int = 128, target_time_bins: int = 256,
                  n_fft: int = 2048, hop_length: int = 320):
         self.sr = sr
         self.target_samples = int(sr * clip_length)
@@ -184,6 +184,8 @@ def main() -> None:
     p.add_argument("--device", default="cuda")
     p.add_argument("--batch-size", type=int, default=16)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--mel-bands", type=int, default=128, help="n_mels (must match checkpoint)")
+    p.add_argument("--mel-time", type=int, default=256, help="target_time_bins (must match checkpoint)")
     args = p.parse_args()
 
     if not args.random_init and args.ckpt is None:
@@ -205,15 +207,15 @@ def main() -> None:
     print(f"      train domains: {dict(domains_train)}")
     print(f"      test  domains: {dict(domains_test)}")
 
-    print(f"[2/5] Building encoder")
-    encoder = build_encoder()
+    print(f"[2/5] Building encoder (input_size = {args.mel_time} x {args.mel_bands})")
+    encoder = build_encoder(input_size=(args.mel_time, args.mel_bands))
     if args.random_init:
         print("      using RANDOM-init encoder (baseline)")
     else:
         load_jepa_encoder_weights(encoder, args.ckpt)
     encoder = encoder.to(args.device).eval()
 
-    mel = MelExtractor()
+    mel = MelExtractor(n_mels=args.mel_bands, target_time_bins=args.mel_time)
 
     print(f"[3/5] Computing TRAIN embeddings")
     train_emb, train_labels = compute_embeddings(encoder, mel, train_items,
