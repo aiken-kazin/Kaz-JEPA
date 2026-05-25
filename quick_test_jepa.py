@@ -1,111 +1,117 @@
 """Quick sanity check for a trained JEPA checkpoint.
 
-Loads the encoder from a checkpoint, runs ~20 dev clips through it, and
-prints embedding statistics + pairwise similarities. Purpose: detect
-representation collapse without building full downstream eval.
+Inspects the saved weights directly — no Hydra, no forward pass, no model
+instantiation. Catches obvious failures (collapse, dead weights, broken EMA)
+in seconds.
 
 Healthy signs:
-  - embedding std > 0.01
-  - pairwise cosine similarities spread across some range (not all ~1)
-Collapse signs:
-  - std near 0
-  - all similarities ~1 (every clip looks identical to model)
+  - Encoder weights have non-zero magnitude (model trained, not random init)
+  - Encoder ≠ target_encoder (EMA momentum worked, two encoders diverged)
+  - Weight magnitudes look reasonable for a Transformer (~0.01 to 1.0)
+
+Collapse / failure signs:
+  - All weights near zero or constant
+  - Encoder == target_encoder exactly (EMA broken)
+  - NaN / Inf in any tensor
 """
 
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 from pathlib import Path
 
-import h5py
-import numpy as np
 import torch
-import torch.nn.functional as F
-from hydra import compose, initialize_config_dir
-from hydra.utils import instantiate
 
 
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--ckpt", type=Path, required=True, help="Path to .ckpt file")
-    p.add_argument("--hdf5", type=Path, default=Path("data/KSC2/ksc2_dev.h5"))
-    p.add_argument("--n-clips", type=int, default=20)
-    p.add_argument("--device", default="cpu")
     args = p.parse_args()
 
-    repo_root = Path(__file__).parent.resolve()
-    configs_dir = str(repo_root / "configs")
+    print(f"Loading checkpoint: {args.ckpt}")
+    ckpt = torch.load(str(args.ckpt), map_location="cpu", weights_only=False)
+    sd = ckpt.get("state_dict", ckpt)
 
-    print(f"[1/5] Loading config & instantiating model...")
-    with initialize_config_dir(version_base=None, config_dir=configs_dir):
-        cfg = compose(
-            config_name="train",
-            overrides=["data=ksc2", "trainer=cpu", "logger=null", "callbacks=default"],
-        )
-    model = instantiate(cfg.model)
-    model.eval()
+    print(f"\nCheckpoint keys: {list(ckpt.keys())[:10]}")
+    print(f"Total state_dict tensors: {len(sd)}\n")
 
-    print(f"[2/5] Loading checkpoint: {args.ckpt}")
-    ckpt = torch.load(str(args.ckpt), map_location=args.device, weights_only=False)
-    state_dict = ckpt.get("state_dict", ckpt)
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    if missing:
-        print(f"  warn: {len(missing)} missing keys (e.g. {missing[:3]})")
-    if unexpected:
-        print(f"  warn: {len(unexpected)} unexpected keys (e.g. {unexpected[:3]})")
+    # Group keys by component
+    groups: dict[str, list[str]] = defaultdict(list)
+    for k in sd:
+        prefix = k.split(".")[0]
+        groups[prefix].append(k)
 
-    encoder = model.encoder.to(args.device).eval()
+    print("=" * 60)
+    print("COMPONENTS")
+    print("=" * 60)
+    for prefix, keys in sorted(groups.items()):
+        total_params = sum(sd[k].numel() for k in keys)
+        print(f"  {prefix:<20s} {len(keys):>4d} tensors  {total_params/1e6:>7.2f} M params")
 
-    print(f"[3/5] Loading {args.n_clips} clips from {args.hdf5}")
-    with h5py.File(str(args.hdf5), "r") as f:
-        n = min(args.n_clips, len(f["waveform"]))
-        waves = f["waveform"][:n].astype(np.float32) / 32767.0
-        names = [f["audio_name"][i].decode() for i in range(n)]
+    # NaN / Inf check
+    print("\n" + "=" * 60)
+    print("HEALTH CHECKS")
+    print("=" * 60)
+    nan_keys = [k for k, v in sd.items() if torch.is_floating_point(v) and not torch.isfinite(v).all()]
+    if nan_keys:
+        print(f"⚠️  NaN/Inf in {len(nan_keys)} tensors: {nan_keys[:3]}")
+    else:
+        print("✅ No NaN/Inf in any tensor")
 
-    print(f"[4/5] Computing mel-spectrograms & embeddings...")
-    transforms = [instantiate(t) for t in cfg.data.transforms]
+    # Encoder weight statistics
+    enc_weights = [v for k, v in sd.items() if k.startswith("encoder.") and "weight" in k and v.dim() >= 2]
+    if enc_weights:
+        all_vals = torch.cat([w.flatten() for w in enc_weights])
+        print(f"✅ Encoder weight stats ({len(enc_weights)} matrices):")
+        print(f"     mean abs: {all_vals.abs().mean().item():.4f}")
+        print(f"     std     : {all_vals.std().item():.4f}")
+        print(f"     min/max : {all_vals.min().item():+.4f} / {all_vals.max().item():+.4f}")
 
-    embeddings = []
-    with torch.no_grad():
-        for wav in waves:
-            x = torch.from_numpy(wav).unsqueeze(0).to(args.device)  # (1, samples)
-            for t in transforms:
-                x = t(x)
-            if x.dim() == 3:
-                x = x.unsqueeze(1)  # add channel dim if missing
-            out = encoder(x)
-            if isinstance(out, tuple):
-                out = out[0]
-            # out shape typically (1, num_patches, embed_dim) — pool to one vec
-            pooled = out.mean(dim=1) if out.dim() == 3 else out
-            embeddings.append(pooled.squeeze(0).cpu())
+        if all_vals.abs().mean().item() < 1e-5:
+            print("⚠️  Encoder weights near zero — model may not have trained!")
+        elif all_vals.std().item() < 1e-4:
+            print("⚠️  Encoder weights have very low variance — possible issue")
 
-    emb = torch.stack(embeddings)  # (n, embed_dim)
+    # Encoder vs target_encoder divergence (EMA check)
+    enc_keys = sorted(k for k in sd if k.startswith("encoder."))
+    tgt_keys = sorted(k for k in sd if k.startswith("target_encoder."))
 
-    print(f"[5/5] Stats:")
-    print(f"  embedding shape: {tuple(emb.shape)}")
-    print(f"  abs mean       : {emb.abs().mean().item():.4f}")
-    print(f"  std per-dim    : {emb.std(dim=0).mean().item():.4f}")
-    print(f"  norm per-clip  : {emb.norm(dim=-1).mean().item():.4f}")
+    if enc_keys and tgt_keys:
+        diffs = []
+        for ek, tk in zip(enc_keys, tgt_keys):
+            e_suffix = ek[len("encoder.") :]
+            t_suffix = tk[len("target_encoder.") :]
+            if e_suffix == t_suffix and sd[ek].shape == sd[tk].shape:
+                d = (sd[ek] - sd[tk]).abs().mean().item()
+                diffs.append(d)
+        if diffs:
+            mean_diff = sum(diffs) / len(diffs)
+            print(f"\n✅ Encoder ↔ Target Encoder divergence ({len(diffs)} matching tensors):")
+            print(f"     mean abs diff: {mean_diff:.6f}")
+            if mean_diff < 1e-7:
+                print("⚠️  Encoders are identical — EMA may not have updated!")
+            elif mean_diff > 0.1:
+                print("⚠️  Encoders very different — EMA momentum may be too low")
+            else:
+                print("     ✓ Reasonable EMA divergence (encoders trained, but coupled)")
 
-    normed = F.normalize(emb, dim=-1)
-    sim = normed @ normed.T
-    off = sim.masked_select(~torch.eye(len(sim), dtype=torch.bool))
-    print(f"  pairwise cosine sim (off-diag):")
-    print(f"    mean: {off.mean().item():+.4f}")
-    print(f"    std : {off.std().item():.4f}")
-    print(f"    min : {off.min().item():+.4f}")
-    print(f"    max : {off.max().item():+.4f}")
+    # Training info from checkpoint
+    print("\n" + "=" * 60)
+    print("TRAINING METADATA")
+    print("=" * 60)
+    if "epoch" in ckpt:
+        print(f"  Epoch         : {ckpt['epoch']}")
+    if "global_step" in ckpt:
+        print(f"  Global step   : {ckpt['global_step']}")
+    if "callbacks" in ckpt:
+        for k, v in ckpt["callbacks"].items():
+            if isinstance(v, dict) and "best_model_score" in v:
+                print(f"  Best val_loss : {v['best_model_score'].item():.6f}")
+                print(f"  Best ckpt path: {v.get('best_model_path', 'n/a')}")
+                break
 
     print()
-    if off.std().item() < 0.01:
-        print("⚠️  All clips look near-identical to the model — likely COLLAPSE.")
-    elif off.mean().item() > 0.95:
-        print("⚠️  All similarities very high — partial collapse possible.")
-    elif emb.std(dim=0).mean().item() < 0.001:
-        print("⚠️  Embedding dimensions barely vary — likely COLLAPSE.")
-    else:
-        print("✅ Embeddings look diverse — model learned something.")
 
 
 if __name__ == "__main__":
