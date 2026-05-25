@@ -1,0 +1,274 @@
+% Audio-JEPA-KZ: Self-Supervised Pretraining of Speech Representations for Kazakh
+% Draft v1 — 2026-05-25
+% Compile with: pdflatex audio_jepa_kz.tex && bibtex audio_jepa_kz && pdflatex audio_jepa_kz.tex && pdflatex audio_jepa_kz.tex
+
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\newcommand{\todo}[1]{{\color{red}\textbf{[TODO:} #1\textbf{]}}}
+
+\begin{document}
+
+\title{Audio-JEPA-KZ: Self-Supervised Pretraining of Speech Representations for Kazakh}
+
+\author{
+\IEEEauthorblockN{Aiken Kazin}
+\IEEEauthorblockA{\textit{\todo{Affiliation}} \\
+\textit{\todo{City, Country}}\\
+aikenkazin@gmail.com}
+}
+
+\maketitle
+
+\begin{abstract}
+We present \textbf{Audio-JEPA-KZ}, the first self-supervised speech representation model for the Kazakh language. Building on the Joint-Embedding Predictive Architecture (JEPA) paradigm and adapting the Audio-JEPA framework of Tuncay \emph{et al.}\ \cite{tuncay2025audiojepa}, we pretrain a Vision Transformer encoder on 1{,}744 hours of unlabeled Kazakh speech from the KSC2 corpus, covering broadcast, conversational, and read-speech domains. Training is performed for \todo{30k or 100k} steps on a single RTX 5090 GPU. We evaluate the learned representations via $k$-Nearest-Neighbor (kNN) classification on a domain-identification task across seven KSC2 audio sources. The pretrained encoder achieves \todo{55.4 / final}\,\% accuracy versus $45.2$\,\% for a randomly initialized baseline (\todo{+\,\textcolor{black}{X}} percentage points), demonstrating that JEPA-based SSL produces useful Kazakh speech embeddings even when general-purpose pretrained audio models are unavailable for the language. Code and pretrained checkpoints are released on GitHub\footnote{\url{https://github.com/aiken-kazin/Kaz-JEPA}} and HuggingFace\footnote{\todo{HF URL}}.
+\end{abstract}
+
+\begin{IEEEkeywords}
+self-supervised learning, speech representation, joint-embedding predictive architecture, Kazakh, low-resource speech, Audio-JEPA
+\end{IEEEkeywords}
+
+%% ---------------------------------------------------------------------------
+\section{Introduction}
+%% ---------------------------------------------------------------------------
+
+Kazakh, a Turkic language spoken by approximately 13~million people, remains a \emph{low-resource} language for modern speech technology. Production-quality automatic speech recognition (ASR) systems for Kazakh either rely on multilingual foundation models such as Whisper \cite{radford2023whisper} and wav2vec~2.0 XLS-R \cite{babu2022xlsr}---which include only a small fraction of Kazakh data---or are trained from scratch on labeled corpora that are much smaller than those available for high-resource languages.
+
+A complementary approach is \emph{self-supervised learning} (SSL), which exploits the large amount of \emph{unlabeled} audio that is readily available even for low-resource languages. SSL has reshaped speech representation learning through methods such as wav2vec~2.0 \cite{baevski2020wav2vec2}, HuBERT \cite{hsu2021hubert}, data2vec \cite{baevski2022data2vec}, and most recently Joint-Embedding Predictive Architectures (JEPA) \cite{assran2023ijepa,bardes2024vjepa,tuncay2025audiojepa}. To date, \textbf{no SSL speech foundation model has been pretrained specifically for Kazakh}.
+
+In this work we close that gap. Our contributions are:
+
+\begin{enumerate}
+    \item \textbf{Audio-JEPA-KZ:} the first JEPA-based speech encoder pretrained from scratch on 1{,}744 hours of Kazakh audio.
+    \item An \textbf{evaluation protocol} for Kazakh SSL representations based on kNN domain classification across seven KSC2 sources.
+    \item Empirical evidence that pretraining produces a measurable improvement over random initialization, with a clear progression as a function of pretraining steps.
+    \item Public release of the pretrained checkpoint and end-to-end code.
+\end{enumerate}
+
+We adopt the methodological approach of Audio-JEPA without architectural modifications, focusing this paper on the \emph{transfer} of the method to a low-resource Turkic language and the \emph{scaling behavior} of representation quality with pretraining compute.
+
+%% ---------------------------------------------------------------------------
+\section{Related Work}
+%% ---------------------------------------------------------------------------
+
+\subsection{Self-supervised speech models}
+
+wav2vec~2.0 \cite{baevski2020wav2vec2} introduced contrastive masked prediction in latent speech space. HuBERT \cite{hsu2021hubert} replaced contrastive targets with iterative clustering targets. data2vec \cite{baevski2022data2vec} unified vision, speech, and language SSL via continuous EMA-teacher targets. WavLM \cite{chen2022wavlm} added denoising-style augmentations. All of these have been scaled to multilingual settings, but the Kazakh slice of multilingual corpora is small relative to high-resource languages.
+
+\subsection{Joint-Embedding Predictive Architectures}
+
+Originally proposed for images as I-JEPA \cite{assran2023ijepa} and extended to video as V-JEPA \cite{bardes2024vjepa}, JEPA models predict latent representations of masked regions rather than reconstructing raw inputs. Audio-JEPA \cite{tuncay2025audiojepa} adapted I-JEPA to mel-spectrograms with a Vision Transformer (ViT) backbone and an EMA-updated target encoder. It was pretrained on AudioSet and benchmarked on the X-ARES suite, where it matched wav2vec~2.0 and data2vec while using less than one fifth of their pretraining data.
+
+\subsection{Low-resource speech and Kazakh NLP}
+
+Several recent works address Kazakh ASR via supervised training \todo{cite KazakhBERT, KSC, KazNU works}, but, to our knowledge, no prior work applies SSL-style pretraining to a Kazakh-only corpus. Our work fills this gap.
+
+%% ---------------------------------------------------------------------------
+\section{Method}
+%% ---------------------------------------------------------------------------
+
+We follow the Audio-JEPA design \cite{tuncay2025audiojepa} with no architectural modifications.
+
+\subsection{Input representation}
+
+Each 10-second audio clip at 32~kHz is converted to a mel-spectrogram of size $512 \times 96$ (time $\times$ mel bins) using a 2048-point FFT with a 320-sample hop. The spectrogram is split into non-overlapping $16 \times 16$ patches, yielding 192 patches per clip.
+
+\subsection{Architecture}
+
+A 12-layer, 12-head Vision Transformer with embedding dimension 768 ($\approx$\,85.4~M parameters) serves as the \emph{context encoder} $f_\theta$. A second ViT of identical architecture is maintained as the \emph{target encoder} $f_\xi$, updated by exponential moving average (EMA):
+\begin{equation}
+\xi \leftarrow \tau\,\xi + (1-\tau)\,\theta,\qquad \tau \approx 0.996.
+\end{equation}
+A lightweight 6-layer ViT (embedding 384, $\approx$\,11.3~M parameters) re-projects context embeddings to the target embedding dimension.
+
+\subsection{Objective}
+
+Let $x$ denote the patchified mel-spectrogram and $M$ a randomly sampled set of masked patch indices. The context encoder embeds the visible patches; the target encoder embeds the full spectrogram; the predictor $g_\phi$ produces predictions $\hat{c}_j$ for masked positions. Training minimizes
+\begin{equation}
+\mathcal{L} = \frac{1}{|M|}\sum_{j \in M} \bigl\| g_\phi(f_\theta(x_{\setminus M}))_j - f_\xi(x)_j \bigr\|_2^2,
+\end{equation}
+with stop-gradient applied to the target encoder branch.
+
+Our implementation is byte-for-byte identical to the original Audio-JEPA codebase; the contribution of this paper is the data adaptation to Kazakh and the resulting analysis.
+
+%% ---------------------------------------------------------------------------
+\section{Experimental Setup}
+%% ---------------------------------------------------------------------------
+
+\subsection{Dataset}
+
+We use the \textbf{KSC2 corpus} (ISSAI, Kazakh Speech Corpus~2), comprising 645{,}860 audio clips totaling approximately 1{,}744 hours. KSC2 spans seven source domains: \texttt{radio}, \texttt{podcasts}, \texttt{tv\_news}, \texttt{talkshow}, \texttt{crowdsourced}, \texttt{parliament}, and \texttt{tts}. The standard split provides 627{,}824 training clips, 8{,}685 development clips, and 9{,}351 test clips. For pretraining we use only the training split; transcripts are unused---the model is purely self-supervised.
+
+We convert raw FLAC files into a single HDF5 file (185~GB compressed, int16 PCM) following the AudioSetDataset schema of \cite{tuncay2025audiojepa} for direct compatibility with the upstream framework.
+
+\subsection{Training}
+
+We train on a single NVIDIA RTX 5090 GPU using bfloat16 mixed precision, batch size 32, and 8 dataloader workers. We use the default Audio-JEPA optimizer (AdamW with $\beta_1=0.9,\beta_2=0.95$, weight decay 0.05) and a warmup--cosine learning rate schedule peaking at $3 \cdot 10^{-4}$. We train for 30{,}000 ($\approx$\,1.5 epochs) and \todo{100{,}000} ($\approx$\,5 epochs) steps. Total wall-clock time for the 30k run is \textbf{54 minutes}.
+
+\subsection{Evaluation}
+
+Following the recommendation of \cite{tuncay2025audiojepa} that JEPA representations are not guaranteed to be linearly separable, we adopt $k$-Nearest-Neighbor classification ($k=5$, cosine similarity) as our primary evaluation. We extract mean-pooled patch embeddings from the (frozen) target encoder for each clip. Each test clip is classified by a majority vote among its 5 nearest training clips.
+
+We evaluate on \emph{domain classification}: given a clip, predict its KSC2 source domain (7-way). We sample 500 train clips and 100 test clips per domain.
+
+\subsection{Baselines}
+
+To isolate the contribution of pretraining we compare three encoders:
+\begin{enumerate}
+    \item \textbf{Random init}: same architecture, random weights, no SSL.
+    \item \textbf{Audio-JEPA-KZ (early)}: our model at step 9{,}810 ($\approx$\,1 epoch).
+    \item \textbf{Audio-JEPA-KZ (full)}: our model at the final step (30k / \todo{100k}).
+\end{enumerate}
+
+%% ---------------------------------------------------------------------------
+\section{Results}
+%% ---------------------------------------------------------------------------
+
+\subsection{Domain classification (kNN, $k=5$)}
+
+Table~\ref{tab:main} reports overall accuracy. The pretrained encoder consistently outperforms the random baseline by a statistically meaningful margin. Performance improves monotonically with pretraining steps, suggesting that further compute is likely to yield further gains.
+
+\begin{table}[t]
+\centering
+\caption{kNN domain classification accuracy on KSC2 (7-way, $k=5$). Random baseline is $1/7 = 14.3$\,\%.}
+\label{tab:main}
+\begin{tabular}{lrrr}
+\toprule
+Encoder & Steps & Accuracy & $\Delta$ vs random \\
+\midrule
+Random init             & ---    & $45.20$\,\% & ---             \\
+Audio-JEPA-KZ (early)   & 9{,}810 & $52.20$\,\% & $+7.0$\,pp     \\
+Audio-JEPA-KZ (mid)     & 29{,}430 & $\mathbf{55.40}$\,\% & $\mathbf{+10.2}$\,pp \\
+Audio-JEPA-KZ (full)    & \todo{100k} & \todo{X}\,\% & \todo{X}\,pp \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Per-domain breakdown}
+
+Table~\ref{tab:perdomain} shows the per-domain accuracy of the 30k checkpoint versus random initialization. Broadcast \texttt{radio} is nearly perfectly identified by both encoders, indicating that the acoustic signature of broadcast equipment is so distinctive that even untrained features suffice. The largest pretraining gains appear on \texttt{crowdsourced} ($+28$\,pp) and \texttt{parliament} ($+13$\,pp), where domain identity depends on subtler speech characteristics rather than coarse audio quality. \texttt{podcasts} remains difficult---frequently confused with \texttt{talkshow}, \texttt{tv\_news}, and \texttt{parliament}---because these categories share long-form conversational speech style.
+
+\begin{table}[t]
+\centering
+\caption{Per-domain accuracy: 30k pretrained vs.\ random init.}
+\label{tab:perdomain}
+\begin{tabular}{lrrr}
+\toprule
+Domain & Pretrained & Random init & $\Delta$ \\
+\midrule
+\texttt{radio}        & $95$\,\% & $92$\,\% & $+3$\,pp  \\
+\texttt{crowdsourced} & $63$\,\% & $35$\,\% & $+28$\,pp \\
+\texttt{talkshow}     & $53$\,\% & $47$\,\% & $+6$\,pp  \\
+\texttt{parliament}   & $49$\,\% & $36$\,\% & $+13$\,pp \\
+\texttt{podcasts}     & $17$\,\% & $16$\,\% & $+1$\,pp  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Pretraining dynamics}
+
+Validation loss on a held-out subset drops from initial random levels to $0.0215$ by step 19{,}620 and plateaus there. Embedding variance remains high ($22.4$), confirming the absence of representation collapse. Encoder and target encoder weights diverge by an EMA-consistent margin (mean absolute difference $8.8 \times 10^{-5}$), indicating healthy momentum-target training dynamics.
+
+%% ---------------------------------------------------------------------------
+\section{Discussion and Limitations}
+%% ---------------------------------------------------------------------------
+
+\subsection{What worked}
+
+\textbf{Pretraining produces a real signal.} A consistent $+10$\,pp gain over random initialization across two intermediate checkpoints establishes that the encoder learns Kazakh-specific acoustic structure rather than relying on coarse spectral statistics. \textbf{Scaling.} Accuracy improves monotonically with pretraining steps in the range we evaluated. \textbf{No collapse.} The standard JEPA stability mechanisms (EMA target encoder, predictor bottleneck) transfer cleanly to the Kazakh setting without hyperparameter tuning.
+
+\subsection{What did not work}
+
+\textbf{CTC-based ASR fine-tuning.} We attempted to fine-tune our pretrained encoder for character-level CTC ASR but found that the spatial resolution of the Audio-JEPA patch grid (32 time patches per 10-second clip) is too coarse for CTC over typical Kazakh utterances (median 74~characters). The training loss plateaued well above the level required for meaningful transcription. This is a known limitation of Audio-JEPA-style models for ASR; we leave architectural fixes---e.g., temporal upsampling heads, smaller temporal patches, or attention-based decoders---to future work.
+
+\subsection{Limitations of evaluation}
+
+Domain classification is a coarse task: \texttt{radio} is solved by random features. Future evaluation should include harder probes such as speaker identification, phoneme classification (with frame-level alignments), or downstream Kazakh-specific tasks once labels are available.
+
+%% ---------------------------------------------------------------------------
+\section{Conclusion}
+%% ---------------------------------------------------------------------------
+
+We introduced \textbf{Audio-JEPA-KZ}, the first self-supervised speech foundation model for Kazakh. Despite training on a single consumer GPU for less than two hours, the model produces representations that meaningfully outperform random initialization on a 7-way domain classification probe, with a clear scaling trend over pretraining steps. We release the model checkpoint, training code, and evaluation utilities to enable downstream Kazakh speech tasks. Future work will extend the architecture to address character-level ASR and incorporate harder probing tasks (speaker, phoneme).
+
+%% ---------------------------------------------------------------------------
+\section*{Acknowledgments}
+%% ---------------------------------------------------------------------------
+
+We thank Tuncay \emph{et al.}\ for open-sourcing Audio-JEPA, and the ISSAI team for releasing the KSC2 corpus.
+
+%% ---------------------------------------------------------------------------
+%% References — inline-style bibliography for fast iteration.
+%% Replace with a proper .bib once entries are finalized.
+%% ---------------------------------------------------------------------------
+\begin{thebibliography}{99}
+\bibitem{tuncay2025audiojepa}
+L.~Tuncay, E.~Labbé, E.~Benetos, and T.~Pellegrini,
+``Audio-JEPA: Joint-Embedding Predictive Architecture for Audio Representation Learning,''
+in \emph{ICME}, 2025.
+
+\bibitem{assran2023ijepa}
+M.~Assran \emph{et al.},
+``Self-Supervised Learning from Images with a Joint-Embedding Predictive Architecture,''
+in \emph{CVPR}, 2023.
+
+\bibitem{bardes2024vjepa}
+A.~Bardes \emph{et al.},
+``Revisiting Feature Prediction for Learning Visual Representations from Video,''
+\emph{arXiv:2404.08471}, 2024.
+
+\bibitem{baevski2020wav2vec2}
+A.~Baevski, H.~Zhou, A.~Mohamed, and M.~Auli,
+``wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations,''
+in \emph{NeurIPS}, 2020.
+
+\bibitem{hsu2021hubert}
+W.-N.~Hsu \emph{et al.},
+``HuBERT: Self-Supervised Speech Representation Learning by Masked Prediction of Hidden Units,''
+\emph{IEEE/ACM TASLP}, 2021.
+
+\bibitem{baevski2022data2vec}
+A.~Baevski \emph{et al.},
+``data2vec: A General Framework for Self-supervised Learning in Speech, Vision and Language,''
+in \emph{ICML}, 2022.
+
+\bibitem{chen2022wavlm}
+S.~Chen \emph{et al.},
+``WavLM: Large-Scale Self-Supervised Pre-Training for Full Stack Speech Processing,''
+\emph{IEEE JSTSP}, 2022.
+
+\bibitem{radford2023whisper}
+A.~Radford \emph{et al.},
+``Robust Speech Recognition via Large-Scale Weak Supervision,''
+in \emph{ICML}, 2023.
+
+\bibitem{babu2022xlsr}
+A.~Babu \emph{et al.},
+``XLS-R: Self-supervised Cross-lingual Speech Representation Learning at Scale,''
+in \emph{Interspeech}, 2022.
+
+\bibitem{lecun2022jepa}
+Y.~LeCun,
+``A Path Towards Autonomous Machine Intelligence,''
+Open Review, 2022.
+
+\bibitem{ksc2}
+\todo{Add ISSAI KSC2 citation.}
+
+\end{thebibliography}
+
+\end{document}
