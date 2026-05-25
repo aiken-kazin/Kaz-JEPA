@@ -205,6 +205,10 @@ def main() -> None:
         every_n_train_steps=2000,
     )
 
+    num_train_batches = len(train_dl)
+    val_interval = max(1, min(2000, num_train_batches, args.max_steps // 5 or 1))
+    print(f"      max_steps={args.max_steps}, train_batches={num_train_batches}, val every {val_interval} steps")
+
     trainer = L.Trainer(
         accelerator=args.accelerator,
         devices=1,
@@ -212,7 +216,7 @@ def main() -> None:
         precision=args.precision,
         default_root_dir=str(args.output_dir),
         callbacks=[ckpt_cb, RichProgressBar()],
-        val_check_interval=2000,
+        val_check_interval=val_interval,
         gradient_clip_val=1.0,
     )
 
