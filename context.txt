@@ -1,6 +1,6 @@
 ================================================================
 KAZ-JEPA PROJECT CONTEXT
-Last updated: 2026-05-25
+Last updated: 2026-05-25 (overnight 100k run launched)
 ================================================================
 
 WHAT THIS IS
@@ -35,16 +35,27 @@ CURRENT STATE (2026-05-25)
    - data/KSC2/ksc2_train.h5 (627,824 clips, 185 GB, ~1744 hours)
    - data/KSC2/ksc2_dev.h5 (8,685 clips, 2.4 GB)
 ✅ First JEPA pretraining done (30k steps, 54 min on 5090):
-   - val/loss: 0.0215
-   - val/variance: 22.38 (no collapse)
+   - val/loss: 0.0215 (plateaued between step 19620 and 29430)
+   - val/variance: 22.38 (no collapse — confirmed by quick_test_jepa.py)
    - Checkpoint: logs/train/runs/2026-05-25_06-33-57/checkpoints/last.ckpt
+✅ quick_test_jepa.py confirms model health:
+   - All weights valid (no NaN/Inf)
+   - Encoder ≠ Target Encoder (EMA worked, divergence 0.000088)
+   - Encoder weight stats normal (mean abs 0.029, std 0.039)
+🔄 100k continuation run launched overnight 2026-05-25 ~05:00,
+   resuming from 30k last.ckpt. Expected finish: ~07:00 (2h on 5090).
 
-⏭️ NEXT STEPS
-   1. (Optional) Extend to 100k steps for stronger model
-   2. Build ASR fine-tuning pipeline (X-ARES from Audio-JEPA team
-      or custom CTC head)
-   3. Evaluate WER/CER on Kazakh ASR
-   4. Write preprint v1
+⏭️ NEXT STEPS (for tomorrow's session)
+   1. Check 100k run finished cleanly: tail training_100k.log, ls checkpoints/
+   2. Compare 100k val/loss vs 30k=0.0215 → did extending help?
+   3. Run quick_test_jepa.py on the 100k checkpoint
+   4. Decide which checkpoint to use as v1 for ASR
+   5. Start building ASR fine-tuning pipeline:
+      - Look at X-ARES fork: https://github.com/LudovicTuncay/xares
+      - Or write custom CTC head + char tokenizer for Kazakh
+   6. Locate KSC2 transcripts (need to grep for non-FLAC files in
+      /home/ubuntu/kazjepa/data/ksc2/ISSAI_KSC2/)
+   7. Write preprint v1 (4-6 weeks goal)
 
 ENVIRONMENT-SPECIFIC GOTCHAS
 ----------------------------
