@@ -20,12 +20,12 @@ clip_length: 10  # seconds
 # Task parameters (unused for SSL pretraining; kept to match upstream schema)
 classes_num: 527
 
-# waveform transforms
+# waveform transforms — matches original Audio-JEPA paper (Tuncay et al., 2025)
 transforms:
   - _target_: src.data.components.mel_spec.MelSpecTransform
     sr: ${data.sr}
-    n_mels: 96
-    target_time_bins: 512
+    n_mels: 128
+    target_time_bins: 256
     clip_length: ${data.clip_length}
 
 ##################################################
